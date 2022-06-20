@@ -1,6 +1,6 @@
-import Helper._;
-import java.io.FileReader;
-import java.nio.charset.Charset;
+import Helper._
+import java.io.FileReader
+import java.nio.charset.Charset
 import java.nio.ByteBuffer
 import scala.collection.immutable.ArraySeq
 import java.lang
