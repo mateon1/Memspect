@@ -155,9 +155,9 @@ object Parser {
         | ("[" ~ expr ~ "]").map(expr => ty => Type.Array(ty, expr)))
     )
     def ty[_: P]: P[Type] = P(
-        ("calc" ~ "(" ~ expr ~ ")").map(Type.Calc) |
-        ("if" ~ "(" ~ expr ~ ")" ~ ty).map(Type.Conditional.tupled) |
-        ("in" ~ "(" ~ expr ~ ")" ~ ty).map(Type.Inside.tupled) |
+        ("calc" ~/ "(" ~ expr ~ ")").map(Type.Calc) |
+        ("if" ~/ "(" ~ expr ~ ")" ~ ty).map(Type.Conditional.tupled) |
+        ("in" ~/ "(" ~ expr ~ ")" ~ ty).map(Type.Inside.tupled) |
         (plaintype ~ tyTrail.rep).map {
             case (t, trails) =>
                 trails.foldLeft[Type](t)((acc, p) => p(acc))
@@ -197,8 +197,11 @@ object Parser {
         case (lhs, rhss) =>
             rhss.foldLeft(lhs){case (l, (o, r)) => Expr.Binary(l, o, r)}
     }
-    def rassoc[_: P](sub: => P[Expr], o: => P[BinOp]): P[Expr] = P((sub ~ o).rep ~ sub).map {
-        case (lhss, rhs) =>
+    def rassoc[_: P](sub: => P[Expr], o: => P[BinOp]): P[Expr] = P(sub ~ (o ~ sub).rep).map {
+        case (lhs, rhss) =>
+            val all = rhss.prepended((BinOp.Add /*placeholder*/, lhs))
+            val lhss = all.sliding(2).filter(_.length == 2).map(a => (a(0)._2, a(1)._1))
+            val rhs = all.last._2
             lhss.foldRight(rhs){case ((l, o), r) => Expr.Binary(l, o, r)}
     }
     def mone[_: P](sub: => P[Expr], o: => P[BinOp]): P[Expr] = P(
