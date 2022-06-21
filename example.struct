@@ -1,0 +1,35 @@
+weirdStruct := {
+    u2 major;
+    assert (major == 1); // stop parsing on unexpected data
+    u2; // name optional
+    // automatic align unless overridden with @pack or @align(n)
+    otherType*[4] arr; // arrays and pointers (complex types always innermost left to outermost right)
+    // this means indexing arr[5][10] requires the array is (at least) type[11][6]
+    @pack { u2; u1; } inlineStruct;
+    repeat u1 until (_ == 0); // array of unspecified size, parens mandatory
+    repeat {
+        u1 tag;
+        if (tag != 0) varint len;
+        if (tag != 0) u1[len.val] raw;
+        if (tag != 0) match { // u1 buffers can be reused as things to reparse -- NOTE: does this make pointers relative to the new buffer?
+            (tag == 1): in(raw) repeat u1 eof;
+            (tag == 2): in(raw) repeat varint eof;
+            (tag == 3): in(raw) randomComplexType;
+            // fallthrough automatically fails to parse
+        } parsed;
+    } until (_.tag == 0) selfTerminatedTlvArray;
+    repeat repeat u1 until (_ == 0) until (_.length == 1) stringTable;
+    // TODO: at(<object base>[+offset]) type;
+    // maybe at(addr) and provide .base on objects (how does this interact with in(..)?)
+};
+
+varint := @pack {
+    repeat u1 until (_ & 0x80 == 0) raw;
+    assert (raw.length);
+    repeat {
+        calc(helper.length - 1) idx;
+        calc(idx == 0 ? raw[0] : (helper[idx-1].value << 7) | raw[idx]) value;
+        calc(helper.length == raw.length) end;
+    } until (_.end) helper;
+    calc (helper.value) value;
+};
