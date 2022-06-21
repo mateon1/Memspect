@@ -5,47 +5,6 @@ import fastparse.internal.Instrument
 import java.io.FileReader
 import java.io.FileInputStream
 
-/*
-Language overview
-
-Define elements:
-
-weirdStruct := {
-    u2 major;
-    assert (major == 1); // stop parsing on unexpected data
-    u2; // name optional
-    // automatic align unless overridden with @pack or @align(n)
-    otherType*[4] arr; // arrays and pointers (complex types always innermost left to outermost right)
-    // this means indexing arr[5][10] requires the array is (at least) type[11][6]
-    @pack { u2; u1; } inlineStruct;
-    repeat u1 until (_ == 0); // array of unspecified size, parens mandatory
-    repeat {
-        u1 tag;
-        if (tag != 0) varint len;
-        if (tag != 0) u1[len.val] raw;
-        if (tag != 0) match { // u1 buffers can be reused as things to reparse -- NOTE: does this make pointers relative to the new buffer?
-            (tag == 1): in(raw) repeat u1 eof;
-            (tag == 2): in(raw) repeat varint eof;
-            (tag == 3): in(raw) randomComplexType;
-            // fallthrough automatically fails to parse
-        } parsed;
-    } until (_.tag == 0) selfTerminatedTlvArray;
-    repeat repeat u1 until (_ == 0) until (_.length == 1) stringTable;
-    // TODO: at(<object base>[+offset]) type;
-    // maybe at(addr) and provide .base on objects (how does this interact with in(..)?)
-};
-
-varint := @pack {
-    repeat u1 until (_ & 0x80 == 0) raw;
-    assert (raw.length);
-    calc (
-        u8 val = 0;
-        for (e <- raw) val = (val << 7) | e & 0x7f;
-        val
-    ) value;
-};
-*/
-
 object Ast {
     case class Ident(name: String)
     sealed trait Top
@@ -251,7 +210,7 @@ object Foo extends App {
     }""", ty(_))*/
     val s = new FileInputStream("example.struct").readAllBytes()
     //val res = parse("5 >> 2 != 0 ? x : y - y == 0 ? 1 : 0", expr(_), true)
-    val res = parse(s, toplevel(_), true, 1202)
+    val res = parse(s, toplevel(_), true)
     println(res)
     res.fold({case (s, p, extra) =>
         println("Failed")
