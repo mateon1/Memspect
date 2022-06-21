@@ -1,9 +1,6 @@
 import java.util.HexFormat
 import java.lang
 import scala.util.Try
-import fastparse.internal.Instrument
-import java.io.FileReader
-import java.io.FileInputStream
 
 object Ast {
     case class Ident(name: String)
@@ -204,6 +201,7 @@ object Parser {
 object Foo extends App {
     import Parser._
     import fastparse._
+    import java.io.FileInputStream
     /*val res = parse(raw"""{
         u1 * /* inline /* nested */ comment */ [3] * pointsToArrayOfPointers;
         if (0) u4 optional;
