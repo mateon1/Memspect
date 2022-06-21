@@ -8,6 +8,8 @@ lazy val root = (project in file("."))
         name := "Memspect"
     )
 
+libraryDependencies += "com.lihaoyi" %% "fastparse" % "2.3.3"
+
 // Uncomment the following for publishing to Sonatype.
 // See https://www.scala-sbt.org/1.x/docs/Using-Sonatype.html for more detail.
 
