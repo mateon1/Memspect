@@ -6,6 +6,11 @@ import scala.collection.immutable.ArraySeq
 import java.lang
 import java.util.HexFormat
 import scala.collection.Searching
+import java.io.RandomAccessFile
+import java.util.Random
+import java.io.FileInputStream
+import java.io.FileDescriptor
+import java.io.InputStream
 
 case class AddressRange(low: Long, high: Long) extends Ordered[AddressRange] {
     val length = high - low
@@ -91,8 +96,44 @@ class ProcMaps(maps1 : ArraySeq[MapArea]) {
 
 object ProcMaps {
     def apply(pid: Int): ProcMaps = {
-        val ls = lines(new java.io.FileInputStream(f"/proc/$pid%d/maps").readAllBytes())
+        val mapfile = new java.io.FileInputStream(f"/proc/$pid%d/maps")
+        val ls = lines(mapfile.readAllBytes())
+        mapfile.close()
         new ProcMaps(ArraySeq.from(ls.map(MapArea.apply)))
+    }
+}
+
+trait Memory {
+    def inputFromOffset(offs: Long): InputStream
+}
+
+class ForeignMemory(val pid: Int, val maps: ProcMaps) {
+    private val memFile = f"/proc/$pid%d/mem"
+    private val reader = new RandomAccessFile(memFile, "r")
+    private def shouldRead(map: MapArea): Boolean = {
+        map.flags.readable && !map.flags.executable && !(map.path.map(_.startsWith("[v")).getOrElse(false))
+    }
+    private def read(addr: Long, len: Long): Array[Byte] = {
+        assert(len < Int.MaxValue)
+        //println(maps.findArea(addr))
+        val arr = new Array[Byte](len.toInt)
+        reader.seek(addr)
+        reader.readFully(arr)
+        arr
+    }
+    val snapshot = maps.maps.filter(shouldRead).map(a => (a.addr.low, read(a.addr.low, a.addr.length))).toMap
+    reader.close()
+    def getArea(addr: Long): Option[(MapArea, Array[Byte], Long)] = {
+        maps.findArea(addr).flatMap(a => snapshot.get(a.addr.low).map((a, _, addr - a.addr.low)))
+    }/*
+    def inputFromOffset(offs: Long): InputStream = {
+        getArea(offs).get
+    }*/
+}
+
+object ForeignMemory {
+    def apply(pid: Int): ForeignMemory = {
+        new ForeignMemory(pid, ProcMaps(pid))
     }
 }
 

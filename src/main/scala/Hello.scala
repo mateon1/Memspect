@@ -19,3 +19,13 @@ object Hello extends App {
     //println(b.mkString(", "))
     println(HexFormat.ofDelimiter(" ").formatHex(b))
 }
+
+
+object Mem extends App {
+    //println(args)
+    //for (a <- args) println(a)
+    //val pid = Integer.parseUnsignedInt(args(0))
+    val pid = 2686400
+    val m = ForeignMemory(pid)
+    println(m)
+}
