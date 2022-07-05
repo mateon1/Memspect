@@ -6,7 +6,7 @@ weirdStruct := {
     otherType*[4] arr; // arrays and pointers (complex types always innermost left to outermost right)
     // this means indexing arr[5][10] requires the array is (at least) type[11][6]
     @pack { u2; u1; } inlineStruct;
-    repeat u1 until (_ == 0); // array of unspecified size, parens mandatory
+    repeat u1 until (_.last == 0); // array of unspecified size, parens mandatory
     repeat {
         u1 tag;
         if (tag != 0) varint len;
@@ -17,8 +17,8 @@ weirdStruct := {
             (tag == 3): in(raw) randomComplexType;
             // fallthrough automatically fails to parse
         } parsed;
-    } until (_.tag == 0) selfTerminatedTlvArray;
-    repeat repeat u1 until (_ == 0) until (_.length == 1) stringTable;
+    } until (_.last.tag == 0) selfTerminatedTlvArray;
+    repeat repeat u1 until (_.last == 0) until (_.last.length == 1) stringTable;
     // TODO: at(<object base>[+offset]) type;
     // maybe at(addr) and provide .base on objects (how does this interact with in(..)?)
 };
