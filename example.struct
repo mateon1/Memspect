@@ -24,12 +24,12 @@ weirdStruct := {
 };
 
 varint := @pack {
-    repeat u1 until (_ & 0x80 == 0) raw;
+    repeat u1 until (_.last & 0x80 == 0) raw;
     assert (raw.length);
     repeat {
         calc(helper.length - 1) idx;
         calc(idx == 0 ? raw[0] : (helper[idx-1].value << 7) | raw[idx]) value;
         calc(helper.length == raw.length) end;
-    } until (_.end) helper;
-    calc (helper.value) value;
+    } until (_.last.end) helper;
+    calc (helper.last.value) value;
 };

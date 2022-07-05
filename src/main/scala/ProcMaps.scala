@@ -1,16 +1,7 @@
 import Helper._
-import java.io.FileReader
-import java.nio.charset.Charset
-import java.nio.ByteBuffer
 import scala.collection.immutable.ArraySeq
-import java.lang
 import java.util.HexFormat
-import scala.collection.Searching
 import java.io.RandomAccessFile
-import java.util.Random
-import java.io.FileInputStream
-import java.io.FileDescriptor
-import java.io.InputStream
 
 case class AddressRange(low: Long, high: Long) extends Ordered[AddressRange] {
     val length = high - low
@@ -103,11 +94,20 @@ object ProcMaps {
     }
 }
 
-trait Memory {
-    def inputFromOffset(offs: Long): InputStream
+trait RandomAccess {
+    /// Returns an array starting at logical 'offs' of at most 'maxlen' bytes
+    /// Returns empty array at EOF, returns nothing past EOF
+    def read(offs: Long, maxlen: Int): Option[Array[Byte]]
 }
 
-class ForeignMemory(val pid: Int, val maps: ProcMaps) {
+object RandomAccess {
+    implicit class AobRandomAccess(a: Array[Byte]) extends RandomAccess {
+        def read(offs: Long, maxlen: Int): Option[Array[Byte]] = Option.when(offs <= a.length)(a.drop(offs.toInt).take(maxlen))
+    }
+}
+
+
+class ForeignMemory(val pid: Int, val maps: ProcMaps) extends RandomAccess {
     private val memFile = f"/proc/$pid%d/mem"
     private val reader = new RandomAccessFile(memFile, "r")
     private def shouldRead(map: MapArea): Boolean = {
@@ -125,10 +125,8 @@ class ForeignMemory(val pid: Int, val maps: ProcMaps) {
     reader.close()
     def getArea(addr: Long): Option[(MapArea, Array[Byte], Long)] = {
         maps.findArea(addr).flatMap(a => snapshot.get(a.addr.low).map((a, _, addr - a.addr.low)))
-    }/*
-    def inputFromOffset(offs: Long): InputStream = {
-        getArea(offs).get
-    }*/
+    }
+    def read(offs: Long, maxlen: Int): Option[Array[Byte]] = getArea(offs).filter{case (m, _, o) => o < m.addr.length}.map{case (_, a, o) => a.drop(o.toInt).take(maxlen)}
 }
 
 object ForeignMemory {
@@ -175,7 +173,7 @@ private object Helper {
         HexFormat.fromHexDigitsToLong(SeqCharSequence(b.map(_.toChar)))
     }
     def parseLong(b: Array[Byte], radix: Int): Long = {
-        lang.Long.parseUnsignedLong(SeqCharSequence(b.map(_.toChar)), 0, b.length, radix)
+        java.lang.Long.parseUnsignedLong(SeqCharSequence(b.map(_.toChar)), 0, b.length, radix)
     }
 
     def b2s(b:Array[Byte]): String = String.valueOf(b.map(_.toChar))

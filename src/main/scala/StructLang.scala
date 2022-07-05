@@ -1,40 +1,21 @@
-import java.util.HexFormat
-import java.lang
-import scala.util.Try
-import scala.collection.mutable.Stack
 import scala.collection.mutable
-import Ast.Type.Annotated
-import Ast.Type.Named
-import Ast.Type.Struct
-import Ast.Type.Pointer
-import Ast.Type.Repeated
-import Ast.Type.Conditional
-import Ast.Type.Inside
-import Ast.Type.Match
-import Ast.Type.Assert
-import Ast.Type.Calc
-import Ast.Expr.ConstantNum
-import Ast.Expr.ConstantBytes
-import Ast.Expr.Variable
-import Ast.Expr.Ternary
-import Ast.Expr.Binary
-import Ast.Expr.Unary
-import Ast.Expr.Prop
-import Ast.Expr.Index
-import Ast.RepeatCond.Eof
-import Ast.RepeatCond.Until
-import Ast.RepeatCond.While
-import java.io.InputStream
+import scala.collection.immutable
+import RandomAccess._
 
 object Ast {
     case class Ident(name: String)
+    sealed trait Endianness
+    object Endianness {
+        case object Big extends Endianness
+        case object Little extends Endianness
+    }
     sealed trait Top
     object Top {
         case class TypeDef(name: Ident, ty: Type) extends Top
     }
     sealed trait Type
     object Type {
-        case class Integer(bytes: Int) extends Type
+        case class Integer(bytes: Int, endian: Option[Endianness]) extends Type
         case class Annotated(annot: Annotation, ty: Type) extends Type
         case class Named(name: Ident) extends Type
         case class Struct(body: Seq[Stmt]) extends Type
@@ -60,7 +41,7 @@ object Ast {
     }
     sealed trait Expr
     object Expr {
-        case class ConstantNum(value: Long) extends Expr
+        case class ConstantNum(value: BigInt) extends Expr
         case class ConstantBytes(value: IndexedSeq[Byte]) extends Expr
         case class Variable(name: Ident) extends Expr
         case class Ternary(cond: Expr, left: Expr, right: Expr) extends Expr
@@ -73,38 +54,38 @@ object Ast {
         def apply(lhs: StructVal, rhs: StructVal): Option[StructVal] = lhs.intValue.flatMap(l => rhs.intValue.map((l, _))).map{
             case ((l, r)) => StructVal.PrimInt(this(l, r))
         }
-        def apply(lhs: Long, rhs: Long): Long
+        def apply(lhs: BigInt, rhs: BigInt): BigInt
     }
     object BinOp {
-        case object Mul extends BinOp { override def apply(lhs: Long, rhs: Long) = lhs * rhs }
-        case object Div extends BinOp { override def apply(lhs: Long, rhs: Long) = lhs / rhs }
-        case object Mod extends BinOp { override def apply(lhs: Long, rhs: Long) = lhs % rhs }
-        case object Add extends BinOp { override def apply(lhs: Long, rhs: Long) = lhs + rhs }
-        case object Sub extends BinOp { override def apply(lhs: Long, rhs: Long) = lhs - rhs }
-        case object And extends BinOp { override def apply(lhs: Long, rhs: Long) = lhs & rhs }
-        case object Xor extends BinOp { override def apply(lhs: Long, rhs: Long) = lhs ^ rhs }
-        case object Or extends BinOp { override def apply(lhs: Long, rhs: Long) = lhs | rhs }
-        case object Shl extends BinOp { override def apply(lhs: Long, rhs: Long) = lhs << rhs }
-        case object Shr extends BinOp { override def apply(lhs: Long, rhs: Long) = lhs >> rhs }
+        case object Mul extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = lhs * rhs }
+        case object Div extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = lhs / rhs }
+        case object Mod extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = lhs % rhs }
+        case object Add extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = lhs + rhs }
+        case object Sub extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = lhs - rhs }
+        case object And extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = lhs & rhs }
+        case object Xor extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = lhs ^ rhs }
+        case object Or extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = lhs | rhs }
+        case object Shl extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = { assert(rhs.isValidInt); lhs << rhs.toInt } }
+        case object Shr extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = { assert(rhs.isValidInt); lhs >> rhs.toInt } }
 
-        case object Eq extends BinOp { override def apply(lhs: Long, rhs: Long) = if (lhs == rhs) 1 else 0 }
-        case object Neq extends BinOp { override def apply(lhs: Long, rhs: Long) = if (lhs != rhs) 1 else 0 }
-        case object Lt extends BinOp { override def apply(lhs: Long, rhs: Long) = if (lhs < rhs) 1 else 0 }
-        case object Leq extends BinOp { override def apply(lhs: Long, rhs: Long) = if (lhs <= rhs) 1 else 0 }
-        case object Gt extends BinOp { override def apply(lhs: Long, rhs: Long) = if (lhs > rhs) 1 else 0 }
-        case object Geq extends BinOp { override def apply(lhs: Long, rhs: Long) = if (lhs >= rhs) 1 else 0 }
+        case object Eq extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if (lhs == rhs) 1 else 0 }
+        case object Neq extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if (lhs != rhs) 1 else 0 }
+        case object Lt extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if (lhs < rhs) 1 else 0 }
+        case object Leq extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if (lhs <= rhs) 1 else 0 }
+        case object Gt extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if (lhs > rhs) 1 else 0 }
+        case object Geq extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if (lhs >= rhs) 1 else 0 }
 
-        case object LAnd extends BinOp { override def apply(lhs: Long, rhs: Long) = if ((lhs != 0) && (rhs != 0)) 1 else 0 }
-        case object LOr extends BinOp { override def apply(lhs: Long, rhs: Long) = if ((lhs != 0) || (rhs != 0)) 1 else 0 }
+        case object LAnd extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if ((lhs != 0) && (rhs != 0)) 1 else 0 }
+        case object LOr extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if ((lhs != 0) || (rhs != 0)) 1 else 0 }
     }
     sealed trait UnOp {
         def apply(o: StructVal): Option[StructVal] = o.intValue.map(v => StructVal.PrimInt(this(v)))
-        def apply(o: Long): Long
+        def apply(o: BigInt): BigInt
     }
     object UnOp {
-        case object Minus extends UnOp { override def apply(o: Long): Long = -o }
-        case object Negate extends UnOp { override def apply(o: Long): Long = ~o }
-        case object Not extends UnOp { override def apply(o: Long): Long = if (o == 0) 1 else 0 }
+        case object Minus extends UnOp { override def apply(o: BigInt): BigInt = -o }
+        case object Negate extends UnOp { override def apply(o: BigInt): BigInt = ~o }
+        case object Not extends UnOp { override def apply(o: BigInt): BigInt = if (o == 0) 1 else 0 }
     }
     case class Stmt(ty: Type, name: Option[Ident])
     case class MatchArm(cond: Expr, ty: Type)
@@ -113,18 +94,19 @@ object Ast {
 object Parser {
     import fastparse._, ScalaWhitespace._
     import Ast._
+    import java.lang
 
     val keywords = Set("repeat","at","if","in","while","until","for","assert","match")
 
     def wordlike[_: P]: P0 = P( CharIn("a-zA-Z0-9_") )
 
     def ident[_: P]: P[Ident] = P( (CharIn("a-zA-Z_") ~~ CharIn("a-zA-Z0-9_").repX).!.filter(!keywords.contains(_)).map(Ident(_)) )
-    def num[_: P]: P[Long] = P(
-        ("0x" ~~ CharIn("0-9A-Fa-f").repX(1).!.map(s => Try{HexFormat.fromHexDigitsToLong(s)})
-        | "0b" ~~ CharIn("01").repX(1).!.map(s => Try{lang.Long.parseLong(s, 2)})
-        | "0o" ~~ CharIn("0-7").repX(1).!.map(s => Try{lang.Long.parseLong(s, 8)})
-        | CharIn("0-9").repX(1).!.map(s => Try{lang.Long.parseLong(s)})
-        ).filter(_.isSuccess).map(_.get) ~~ !wordlike
+    def num[_: P]: P[BigInt] = P(
+        ("0x" ~~ CharIn("0-9A-Fa-f").repX(1).!.map(BigInt(_, 16))
+        | "0b" ~~ CharIn("01").repX(1).!.map(BigInt(_, 2))
+        | "0o" ~~ CharIn("0-7").repX(1).!.map(BigInt(_, 8))
+        | CharIn("0-9").repX(1).!.map(BigInt(_))
+        ) ~~ !wordlike
     )
 
     def struct[_: P]: P[Type.Struct] = P(("{" ~ stmt.rep ~ "}").map(Type.Struct))
@@ -132,7 +114,10 @@ object Parser {
         ("(" ~ expr ~ ")" ~ ":" ~ ty ~ ";").map(Function.tupled(MatchArm))
     )
     def plaintype[_: P]: P[Type] = P(
-        ( ("u" ~~ (CharIn("1-9") ~~ CharIn("0-9")).!.map(lang.Integer.parseUnsignedInt(_)).map(Type.Integer))
+        ( (("u" ~~
+                (CharIn("1-9") ~~ CharIn("0-9").repX).!.map(lang.Integer.parseUnsignedInt(_)) ~~
+                (("be".!.map(_ => Endianness.Big) | "le".!.map(_ => Endianness.Little)).?)
+            ).map(Type.Integer.tupled))
         | ident.map(Type.Named)
         | (annotation ~ plaintype).map(Type.Annotated.tupled)
         | struct
@@ -238,37 +223,65 @@ object Parser {
 sealed trait StructVal {
     var replaced = Option.empty[StructVal]
     val vals = mutable.ArrayBuffer[StructVal]()
-    val valNames = mutable.HashMap[String, Int]()
+    val valNames = mutable.SeqMap[String, Int]()
+    val valUnnamed = mutable.ArrayBuffer[Int]()
     var spanStart = Option.empty[Long]
     var spanEnd = Option.empty[Long]
-    def apply(idx: Int): Option[StructVal] = Option.empty
+    var last = Option.empty[StructVal]
+    def withSpan(from: Long, to: Long): StructVal = {
+        spanStart = Option(from)
+        spanEnd = Option(to)
+        this
+    }
+    def apply(idx: Int): Option[StructVal] = Option.when(idx < valUnnamed.length)(vals(valUnnamed(idx)))
     def builtinProp(prop: String): Option[StructVal] = {
-        Option(prop match {
-            case "length" => StructVal.PrimInt(vals.length.toLong)
-            case _ => return Option.empty
-        })
+        prop match {
+            case "length" => Some(StructVal.PrimInt(BigInt(valUnnamed.length)))
+            case "last" => last
+            case _ => Option.empty
+        }
     }
     def apply(prop: String): Option[StructVal] = {
         valNames.get(prop).map(vals(_)).orElse(builtinProp(prop))
     }
     def push(o: StructVal, name: Option[String]) = {
+        val idx = vals.length
         vals.addOne(o)
-        for (n <- name) valNames.addOne((n, vals.length - 1))
+        last = Some(o)
+        name match {
+            case None => valUnnamed.addOne(idx)
+            case Some(n) => valNames.addOne((n, idx))
+        }
     }
     def replace(o: StructVal) = replaced = Option(o)
-    def intValue: Option[Long] = replaced.flatMap(_.intValue)
+    def intValue: Option[BigInt] = replaced.flatMap(_.intValue)
+    override def toString(): String = {
+        val names = valNames.map{case((a, b)) => (b, a)}
+        /*"StructVal::" + this.getClass().getSimpleName() + "[" + valUnnamed.length + "] { "*/ "{ " + vals.zipWithIndex.map{case (v, i) => (names.get(i) match { case Some(n) => n + ": "; case None => "" }) + v.toString() + "; "}.mkString + "}" + (intValue match {
+            case None => ""
+            case Some(value) => " = " + value
+        })
+    }
 }
 object StructVal {
     // ...
     case class Object() extends StructVal
-    case class PrimInt(v: Long) extends StructVal { override def intValue = Option(v) }
-    case class PrimBytes(v: IndexedSeq[Byte]) extends StructVal { override def apply(idx: Int) = Option.when(idx < v.size)(StructVal.PrimInt(v(idx).toLong)) }
+    case class PrimInt(v: BigInt) extends StructVal { override def intValue = Option(v) }
+    case class PrimBytes(v: IndexedSeq[Byte]) extends StructVal { override def apply(idx: Int) = Option.when(idx < v.size)(StructVal.PrimInt(BigInt(v(idx) & 0xff))) }
+    case class LazyVal(ctx: StructCtx, mem: RandomAccess, offs: Long, ty: Ast.Type) extends StructVal
 }
 class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, StructVal], val parent: Option[StructCtx], val self: StructVal) {
+    import Ast._
     def resolveName(id: Ast.Ident): Option[StructVal] = {
-        vals.get(id.name).orElse(parent.flatMap(_.resolveName(id)))
+        vals.get(id.name).orElse(self(id.name)).orElse(parent.flatMap(_.resolveName(id)))
     }
     def resolveType(id: Ast.Ident): Option[Ast.Type] = defs.get(id.name)
+    var tracing = false
+    def trace(): Boolean = tracing || parent.map(_.trace()).getOrElse(false)
+    var defaultEndian = Option.empty[Endianness]
+    def getDefaultEndian(): Endianness = defaultEndian.getOrElse(parent.map(_.getDefaultEndian).getOrElse(Endianness.Little))
+    // TODO: Alignment
+
     private def child(obj: StructVal) = new StructCtx(defs, mutable.HashMap.empty, Option(this), obj)
     private def child(name: Option[String]): StructCtx = {
         val subobj = StructVal.Object()
@@ -277,9 +290,19 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
     }
     private def child(name: String): StructCtx = child(Option(name))
     private def child(): StructCtx = child(Option.empty)
-    def parse(mem: ForeignMemory, offs: Long, ty: Ast.Type): Option[Long] = {
+    def parse(mem: RandomAccess, offs: Long, ty: Ast.Type): Option[Long] = {
+        import Type._
+        import Ast.Endianness._
+        if (trace) println("Parsing " + ty.toString())
         ty match {
-            case Ast.Type.Integer(bytes) => throw new NotImplementedError
+            // TODO: Alignment
+            case Ast.Type.Integer(bytes, endian) => mem.read(offs, bytes).filter(_.length == bytes).map(a => {
+                self.replace(StructVal.PrimInt(BigInt(1, endian.getOrElse(getDefaultEndian) match {
+                    case Big => a
+                    case Little => a.reverse
+                })).withSpan(offs, offs + bytes))
+                offs + bytes
+            })
             case Annotated(annot, ty) => parse(mem, offs, ty) // TODO: Make this functional
             case Named(name) => resolveType(name).flatMap(parse(mem, offs, _))
             case Struct(body) => // TODO: Alignment
@@ -287,7 +310,11 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
                         child(stmt.name.map(_.name)).parse(mem, offs, stmt.ty)
                     }
                 }
-            case Pointer(to) => throw new NotImplementedError
+            // TODO: Actual lazy pointer type, not just alias for an integer
+            case Pointer(to) => mem.read(offs, 8).filter(_.length == 8).map(v => self.replace(StructVal.PrimInt(BigInt(1, getDefaultEndian() match {
+                case Big => v
+                case Little => v.reverse
+            })).withSpan(offs, offs + 8))).map(_ => offs + 8)
             case Ast.Type.Array(of, len) => this.eval(len).flatMap(_.intValue).flatMap{
                 case reps =>
                     (1.to(reps.toInt)).foldLeft(Option(offs)){case (o, _) => o.flatMap(child().parse(mem, _, of))}
@@ -300,9 +327,9 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
                         case Some(value) => curoffs = value
                     }
                 } while ((cond match {
-                    case Eof => Option(false)
-                    case Until(pred) => eval(pred).flatMap(_.intValue).map(_ == 0)
-                    case While(pred) => eval(pred).flatMap(_.intValue).map(_ != 0)
+                    case RepeatCond.Eof => Option(false)
+                    case RepeatCond.Until(pred) => eval(pred).flatMap(_.intValue).map(_ == 0)
+                    case RepeatCond.While(pred) => eval(pred).flatMap(_.intValue).map(_ != 0)
                 }) match {
                     case None => return None
                     case Some(bool) => bool
@@ -313,10 +340,10 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
             case Inside(buf, ty) => throw new NotImplementedError
             case Match(arms) => {
                 for (a <- arms) {
-                    eval(a.cond).flatMap(_.intValue) match {
+                    eval(a.cond).flatMap(_.intValue.map(_ != 0)) match {
                         case None => return None
-                        case Some(0) => ()
-                        case Some(_) => return parse(mem, offs, a.ty) 
+                        case Some(false) => ()
+                        case Some(true) => return parse(mem, offs, a.ty) 
                     }
                 }
                 None
@@ -325,8 +352,10 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
             case Calc(expr) => eval(expr).map(v => self.replace(v)).map(_ => offs)
         }
     }
-    def eval(e: Ast.Expr): Option[StructVal] = {
-        e match {
+    def eval(e: Expr): Option[StructVal] = {
+        import Expr._
+        if (trace) println("Evaling " ++ e.toString())
+        val ret = e match {
             case ConstantNum(value) => Option(StructVal.PrimInt(value))
             case ConstantBytes(value) => Option(StructVal.PrimBytes(value))
             case Variable(name) => resolveName(name)
@@ -336,6 +365,8 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
             case Prop(obj, name) => eval(obj).flatMap(_(name.name))
             case Index(arr, idx) => eval(arr).flatMap(a => eval(idx).flatMap(_.intValue).flatMap(v => a(v.toInt)))
         }
+        if (trace) println("Evaled " ++ e.toString() ++ " = " ++ ret.toString())
+        ret
     }
     vals.addOne(("_", self))
 }
@@ -359,14 +390,32 @@ object Foo extends App {
     val s = new FileInputStream("example.struct").readAllBytes()
     //val res = parse("5 >> 2 != 0 ? x : y - y == 0 ? 1 : 0", expr(_), true)
     val res = parse(s, toplevel(_), true)
-    println(res)
+    //println(res)
     res.fold({case (s, p, extra) =>
         println("Failed")
         println(s, p, extra)
         println(extra.trace(true))
     }, { case (e, p) =>
         println("Success")
-        println(e, p)
+        //println(e, p)
     })
+
+    val defs = parse(s, typedefs(_)).get.value
+    val types = immutable.HashMap.from(defs.map(d => (d.name.name, d.ty)))
+
+    val ctx = StructCtx(defs)
+    ctx.tracing = true
+    val parseres = ctx.parse(Array[Byte](0xd5.toByte, 0xaa.toByte, 0xd5.toByte, 0x2a.toByte), 0, types("varint"))
+    println(parseres)
+
+    println(ctx.self)
+    println(ctx.self.valNames)
+    println(ctx.self.vals)
+
+    val helper = ctx.self("helper").get
+    helper.valUnnamed.map(helper.vals(_)).foreach(sv =>
+        println(".. [" + sv("idx").flatMap(_.intValue) + "] " + sv("value").flatMap(_.intValue))
+    )
+    println(ctx.self("value").flatMap(_.intValue))
 
 }
