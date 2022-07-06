@@ -54,7 +54,7 @@ object Ast {
         def apply(lhs: StructVal, rhs: StructVal): Option[StructVal] = lhs.intValue.flatMap(l => rhs.intValue.map((l, _))).map{
             case ((l, r)) => StructVal.PrimInt(this(l, r))
         }
-        def apply(lhs: BigInt, rhs: BigInt): BigInt
+        def apply(lhs: BigInt, rhs: BigInt): BigInt = 0
     }
     object BinOp {
         case object Mul extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = lhs * rhs }
@@ -68,8 +68,8 @@ object Ast {
         case object Shl extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = { assert(rhs.isValidInt); lhs << rhs.toInt } }
         case object Shr extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = { assert(rhs.isValidInt); lhs >> rhs.toInt } }
 
-        case object Eq extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if (lhs == rhs) 1 else 0 }
-        case object Neq extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if (lhs != rhs) 1 else 0 }
+        case object Eq extends BinOp { override def apply(lhs: StructVal, rhs: StructVal): Option[StructVal] = { Some(StructVal.PrimInt(if (lhs == rhs) 1 else 0)) } }
+        case object Neq extends BinOp { override def apply(lhs: StructVal, rhs: StructVal): Option[StructVal] = { Some(StructVal.PrimInt(if (lhs != rhs) 1 else 0)) } }
         case object Lt extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if (lhs < rhs) 1 else 0 }
         case object Leq extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if (lhs <= rhs) 1 else 0 }
         case object Gt extends BinOp { override def apply(lhs: BigInt, rhs: BigInt) = if (lhs > rhs) 1 else 0 }
@@ -271,6 +271,22 @@ sealed trait StructVal {
             case None => ""
             case Some(value) => " = " + value
         })*/
+    }
+    override def equals(obj: Any): Boolean = {
+        if (!obj.isInstanceOf[StructVal]) return false
+        val rhs = obj.asInstanceOf[StructVal]
+        // TODO: How to handle lazy values?
+        (this.valNames.keySet == rhs.valNames.keySet
+        && this.valUnnamed.length == rhs.valUnnamed.length
+        && this.intValue == rhs.intValue
+        && this.valNames.foldLeft(true){case (b, (key, lIdx)) =>
+            b && {
+                val rIdx = rhs.valNames(key)
+                this.vals(lIdx) == rhs.vals(rIdx)
+            }
+        } && this.valUnnamed.zip(rhs.valUnnamed).foldLeft(true){case (b, (lIdx, rIdx)) =>
+            b && this.vals(lIdx) == rhs.vals(rIdx)
+        })
     }
 }
 object StructVal {
