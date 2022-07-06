@@ -106,7 +106,21 @@ object Parser {
         | "0b" ~~ CharIn("01").repX(1).!.map(BigInt(_, 2))
         | "0o" ~~ CharIn("0-7").repX(1).!.map(BigInt(_, 8))
         | CharIn("0-9").repX(1).!.map(BigInt(_))
+        | "'" ~~ bytestrchar.map(BigInt(_)) ~~ "'"
         ) ~~ !wordlike
+    )
+
+    def bytestrchar[_: P]: P[Byte] = P(
+        ("\\x" ~~ CharIn("0-9a-fA-F").repX(exactly=2).!.map(lang.Byte.parseByte(_, 16))
+        | "\\n".!.map(_ => '\n'.toByte)
+        | "\\t".!.map(_ => '\t'.toByte)
+        | "\\r".!.map(_ => '\r'.toByte)
+        | CharIn(" !#-[]-~").!.map(_(0).toByte) // printable ascii except '"' and '\'
+        )
+    )
+
+    def bytestr[_: P]: P[Expr.ConstantBytes] = P(
+        "b\"" ~~ bytestrchar.repX.map(bs => Expr.ConstantBytes(bs.toIndexedSeq)) ~~ "\""
     )
 
     def struct[_: P]: P[Type.Struct] = P(("{" ~ stmt.rep ~ "}").map(Type.Struct))
