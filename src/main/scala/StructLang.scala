@@ -13,15 +13,33 @@ object Ast {
     object Top {
         case class TypeDef(name: Ident, ty: Type) extends Top
     }
-    sealed trait Type
+    sealed trait Type {
+        protected def fitPowTwo(x: Int): Int = {
+            assert(x > 0)
+            var t = x - 1 // subtract one, so if it's already a power of two, don't change it
+            t = t | (t >> 1) // smear ones all over the least significant bits
+            t = t | (t >> 2)
+            t = t | (t >> 4)
+            t = t | (t >> 8)
+            t = t | (t >> 16) // it's now 2^k-1
+            t + 1 // and now 2^k
+        }
+        val naturalAlignment: Option[Int] = None
+    }
     object Type {
-        case class Integer(bytes: Int, endian: Option[Endianness]) extends Type
-        case class Annotated(annot: Annotation, ty: Type) extends Type
+        import Annotation._
+        case class Integer(bytes: Int, endian: Option[Endianness]) extends Type { override val naturalAlignment: Option[Int] = Some(fitPowTwo(bytes)) }
+        case class Annotated(annot: Annotation, ty: Type) extends Type {
+            override val naturalAlignment: Option[Int] = annot match {
+                case Align(alignment) => Some(alignment)
+                case Pack => Some(1) // @pack needs to be handled separately anyway, as it overrides alignment for all children
+            }
+        }
         case class Named(name: Ident) extends Type
-        case class Struct(body: Seq[Stmt]) extends Type
-        case class Pointer(to: Type) extends Type
-        case class Array(of: Type, len: Expr) extends Type
-        case class Repeated(what: Type, cond: RepeatCond) extends Type
+        case class Struct(body: Seq[Stmt]) extends Type { override val naturalAlignment: Option[Int] = body.flatMap(s => s.ty.naturalAlignment).maxOption }
+        case class Pointer(to: Type) extends Type { override val naturalAlignment: Option[Int] = Some(8) }
+        case class Array(of: Type, len: Expr) extends Type { override val naturalAlignment: Option[Int] = of.naturalAlignment }
+        case class Repeated(what: Type, cond: RepeatCond) extends Type { override val naturalAlignment: Option[Int] = what.naturalAlignment }
         case class Conditional(cond: Expr, ty: Type) extends Type
         case class Inside(buf: Expr, ty: Type) extends Type
         case class Match(arms: Seq[MatchArm]) extends Type
