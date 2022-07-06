@@ -60,7 +60,7 @@ object Ast {
     sealed trait Expr
     object Expr {
         case class ConstantNum(value: BigInt) extends Expr
-        case class ConstantBytes(value: IndexedSeq[Byte]) extends Expr
+        case class ConstantBytes(value: Seq[Byte]) extends Expr
         case class Variable(name: Ident) extends Expr
         case class Ternary(cond: Expr, left: Expr, right: Expr) extends Expr
         case class Binary(left: Expr, op: BinOp, right: Expr) extends Expr
@@ -138,7 +138,7 @@ object Parser {
     )
 
     def bytestr[_: P]: P[Expr.ConstantBytes] = P(
-        "b\"" ~~ bytestrchar.repX.map(bs => Expr.ConstantBytes(bs.toIndexedSeq)) ~~ "\""
+        "b\"" ~~ bytestrchar.repX.map(bs => Expr.ConstantBytes(bs)) ~~ "\""
     )
 
     def struct[_: P]: P[Type.Struct] = P(("{" ~ stmt.rep ~ "}").map(Type.Struct))
@@ -191,7 +191,7 @@ object Parser {
                       | "n".!.map(_ => '\n'.toByte)
                       | "t".!.map(_ => '\t'.toByte)
                       | "\"".!.map(_ => '"'.toByte))
-            ).rep ~~ "\"").map(s => Expr.ConstantBytes(s.toIndexedSeq))
+            ).rep ~~ "\"").map(s => Expr.ConstantBytes(s))
         | ident.map(Expr.Variable)
         | "(" ~ expr ~ ")"
         ) ~ trailAtom.repX
@@ -325,7 +325,14 @@ object StructVal {
     // ...
     case class Object() extends StructVal
     case class PrimInt(v: BigInt) extends StructVal { override def intValue = Option(v) }
-    case class PrimBytes(v: IndexedSeq[Byte]) extends StructVal { override def apply(idx: Int) = Option.when(idx < v.size)(StructVal.PrimInt(BigInt(v(idx) & 0xff))) }
+    // This sucks for performance (or does it?) but makes equality work consistently at least
+    object PrimBytes {
+        def apply(vs: Seq[Byte]): StructVal = {
+            val o = StructVal.Object()
+            for (v <- vs) o.push(StructVal.PrimInt(v & 0xff), None)
+            o
+        }
+    }
     case class LazyVal(ctx: StructCtx, mem: RandomAccess, offs: Long, ty: Ast.Type) extends StructVal
 }
 class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, StructVal], val parent: Option[StructCtx], val self: StructVal, var isolated: Boolean = false) {
