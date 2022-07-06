@@ -257,10 +257,20 @@ sealed trait StructVal {
     def intValue: Option[BigInt] = replaced.flatMap(_.intValue)
     override def toString(): String = {
         val names = valNames.map{case((a, b)) => (b, a)}
-        /*"StructVal::" + this.getClass().getSimpleName() + "[" + valUnnamed.length + "] { "*/ "{ " + vals.zipWithIndex.map{case (v, i) => (names.get(i) match { case Some(n) => n + ": "; case None => "" }) + v.toString() + "; "}.mkString + "}" + (intValue match {
+        val subs = vals.zipWithIndex.map{case (v, i) => (names.get(i) match { case Some(n) => n + ": "; case None => "" }) + v.toString() + "; "}
+        val span = for (start <- spanStart; end <- spanEnd) yield f"<$start%d..$end%d>"
+        () match {
+            case () if intValue.isDefined && subs.isEmpty => intValue.get.toString()
+            case () =>
+                span.map(_ + " ").getOrElse("") +
+                Option.when(subs.nonEmpty)("{ " + subs.mkString + "}").getOrElse("nil") +
+                intValue.map(" = " + _).getOrElse("")
+        }
+        /*
+        /*"StructVal::" + this.getClass().getSimpleName() + "[" + valUnnamed.length + "] { "*/ "{ " + subs.mkString + "}" + (intValue match {
             case None => ""
             case Some(value) => " = " + value
-        })
+        })*/
     }
 }
 object StructVal {
