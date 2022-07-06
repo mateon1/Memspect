@@ -270,10 +270,10 @@ object StructVal {
     case class PrimBytes(v: IndexedSeq[Byte]) extends StructVal { override def apply(idx: Int) = Option.when(idx < v.size)(StructVal.PrimInt(BigInt(v(idx) & 0xff))) }
     case class LazyVal(ctx: StructCtx, mem: RandomAccess, offs: Long, ty: Ast.Type) extends StructVal
 }
-class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, StructVal], val parent: Option[StructCtx], val self: StructVal) {
+class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, StructVal], val parent: Option[StructCtx], val self: StructVal, var isolated: Boolean = false) {
     import Ast._
     def resolveName(id: Ast.Ident): Option[StructVal] = {
-        vals.get(id.name).orElse(self(id.name)).orElse(parent.flatMap(_.resolveName(id)))
+        vals.get(id.name).orElse(self(id.name)).orElse(parent.filter(_ => !isolated).flatMap(_.resolveName(id)))
     }
     def resolveType(id: Ast.Ident): Option[Ast.Type] = defs.get(id.name)
     var tracing = false
@@ -282,14 +282,14 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
     def getDefaultEndian(): Endianness = defaultEndian.getOrElse(parent.map(_.getDefaultEndian).getOrElse(Endianness.Little))
     // TODO: Alignment
 
-    private def child(obj: StructVal) = new StructCtx(defs, mutable.HashMap.empty, Option(this), obj)
-    private def child(name: Option[String]): StructCtx = {
+    private def child(obj: StructVal, isolated: Boolean) = new StructCtx(defs, mutable.HashMap.empty, Option(this), obj, isolated)
+    private def child(name: Option[String], isolated: Boolean): StructCtx = {
         val subobj = StructVal.Object()
         self.push(subobj, name)
-        child(subobj)
+        child(subobj, isolated)
     }
-    private def child(name: String): StructCtx = child(Option(name))
-    private def child(): StructCtx = child(Option.empty)
+    private def child(name: String, isolated: Boolean): StructCtx = child(Option(name), isolated)
+    private def child(isolated: Boolean = false): StructCtx = child(Option.empty, isolated)
     def parse(mem: RandomAccess, offs: Long, ty: Ast.Type): Option[Long] = {
         import Type._
         import Ast.Endianness._
@@ -297,27 +297,30 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
         ty match {
             // TODO: Alignment
             case Ast.Type.Integer(bytes, endian) => mem.read(offs, bytes).filter(_.length == bytes).map(a => {
-                self.replace(StructVal.PrimInt(BigInt(1, endian.getOrElse(getDefaultEndian) match {
+                self.withSpan(offs, offs + bytes).replace(StructVal.PrimInt(BigInt(1, endian.getOrElse(getDefaultEndian) match {
                     case Big => a
                     case Little => a.reverse
-                })).withSpan(offs, offs + bytes))
+                })))
                 offs + bytes
             })
             case Annotated(annot, ty) => parse(mem, offs, ty) // TODO: Make this functional
-            case Named(name) => resolveType(name).flatMap(parse(mem, offs, _))
+            case Named(name) => {
+                isolated = true // can't resolve names outside lexical scope, still needs to be parent for attributes and such
+                resolveType(name).flatMap(parse(mem, offs, _))
+            }
             case Struct(body) => // TODO: Alignment
                 body.foldLeft(Option(offs)){ case (res, stmt) => res.flatMap { case offs =>
-                        child(stmt.name.map(_.name)).parse(mem, offs, stmt.ty)
+                        child(stmt.name.map(_.name), false).parse(mem, offs, stmt.ty)
                     }
-                }
+                }.map(end => { if (offs < end) self.withSpan(offs, end); end })
             // TODO: Actual lazy pointer type, not just alias for an integer
-            case Pointer(to) => mem.read(offs, 8).filter(_.length == 8).map(v => self.replace(StructVal.PrimInt(BigInt(1, getDefaultEndian() match {
+            case Pointer(to) => mem.read(offs, 8).filter(_.length == 8).map(v => self.withSpan(offs, offs + 8).replace(StructVal.PrimInt(BigInt(1, getDefaultEndian() match {
                 case Big => v
                 case Little => v.reverse
-            })).withSpan(offs, offs + 8))).map(_ => offs + 8)
+            })))).map(_ => offs + 8)
             case Ast.Type.Array(of, len) => this.eval(len).flatMap(_.intValue).flatMap{
                 case reps =>
-                    (1.to(reps.toInt)).foldLeft(Option(offs)){case (o, _) => o.flatMap(child().parse(mem, _, of))}
+                    (1.to(reps.toInt)).foldLeft(Option(offs)){case (o, _) => o.flatMap(child().parse(mem, _, of))}.map(end => { if (offs < end) self.withSpan(offs, end); end })
             }
             case Repeated(what, cond) => {
                 var curoffs = offs
@@ -334,6 +337,7 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
                     case None => return None
                     case Some(bool) => bool
                 })
+                if (offs < curoffs) self.withSpan(offs, curoffs)
                 Option(curoffs)
             }
             case Conditional(cond, ty) => eval(cond).flatMap(_.intValue).flatMap(c => if (c == 0) Option(offs) else parse(mem, offs, ty))
