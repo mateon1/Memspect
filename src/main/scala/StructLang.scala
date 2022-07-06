@@ -61,6 +61,7 @@ object Ast {
     object Expr {
         case class ConstantNum(value: BigInt) extends Expr
         case class ConstantBytes(value: Seq[Byte]) extends Expr
+        case object Nil extends Expr
         case class Variable(name: Ident) extends Expr
         case class Ternary(cond: Expr, left: Expr, right: Expr) extends Expr
         case class Binary(left: Expr, op: BinOp, right: Expr) extends Expr
@@ -114,7 +115,7 @@ object Parser {
     import Ast._
     import java.lang
 
-    val keywords = Set("repeat","at","if","in","while","until","for","assert","match")
+    val keywords = Set("repeat","at","if","in","while","until","for","assert","match","calc","nil")
 
     def wordlike[_: P]: P0 = P( CharIn("a-zA-Z0-9_") )
 
@@ -156,6 +157,7 @@ object Parser {
         | ("repeat" ~ ty ~ repeatCond).map(Type.Repeated.tupled)
         | ("match" ~ "{" ~ matchArm.rep ~ "}").map(Type.Match)
         | ("assert" ~ "(" ~ expr ~ ")").map(Type.Assert))
+        | "(" ~ ty ~ ")"
     )
     def tyTrail[_: P]: P[Function1[Type, Type]] = P(
         ( "*".!.map(_ => ty => Type.Pointer(ty))
@@ -171,7 +173,7 @@ object Parser {
         })
 
     def annotation[_: P]: P[Annotation] = P(
-        "@align" ~ "(" ~ num.map(_.toInt).map(Annotation.Align) ~ ")"
+        "@align" ~ "(" ~ num.map(_.toInt).filter(a => a != 0 && (a & (a-1)) == 0 ).map(Annotation.Align) ~ ")"
         | "@pack".!.map(_ => Annotation.Pack)
     )
     def repeatCond[_: P]: P[RepeatCond] = P(
@@ -184,7 +186,8 @@ object Parser {
          ("[" ~ expr.map(ix => e => Expr.Index(e, ix)) ~ "]")
         |("." ~ ident.map(p => e => Expr.Prop(e, p))))
     def exprAtom[_: P]: P[Expr] = P(
-        ( num.map(Expr.ConstantNum)
+        ( "nil".!.map(_ => Expr.Nil)
+        | num.map(Expr.ConstantNum)
         | ("\"" ~~
             ( CharPred(!"\\\"".contains(_)).!.map(_(0).toByte)
             | "\\" ~~ ( "x" ~~ CharIn("0-9a-fA-F").repX(exactly=2).!.map(lang.Byte.parseByte(_, 16))
@@ -341,7 +344,10 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
         vals.get(id.name).orElse(self(id.name)).orElse(parent.filter(_ => !isolated).flatMap(_.resolveName(id)))
     }
     def resolveType(id: Ast.Ident): Option[Ast.Type] = defs.get(id.name)
+    var packed = false
+    def pack(): Boolean = packed || parent.map(_.pack()).getOrElse(false)
     var tracing = false
+    def traced(): StructCtx = { tracing = true; this }
     def trace(): Boolean = tracing || parent.map(_.trace()).getOrElse(false)
     var defaultEndian = Option.empty[Endianness]
     def getDefaultEndian(): Endianness = defaultEndian.getOrElse(parent.map(_.getDefaultEndian).getOrElse(Endianness.Little))
@@ -355,12 +361,17 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
     }
     private def child(name: String, isolated: Boolean): StructCtx = child(Option(name), isolated)
     private def child(isolated: Boolean = false): StructCtx = child(Option.empty, isolated)
-    def parse(mem: RandomAccess, offs: Long, ty: Ast.Type): Option[Long] = {
+    def parse(mem: RandomAccess, startOffs: Long, ty: Ast.Type): Option[Long] = {
         import Type._
         import Ast.Endianness._
+        import Ast.Annotation._
         if (trace) println("Parsing " + ty.toString())
+        var offs = startOffs
+        if (!pack()) {
+            for (a <- ty.naturalAlignment; if (a > 0))
+                offs += Math.floorMod(-offs, a)
+        }
         ty match {
-            // TODO: Alignment
             case Ast.Type.Integer(bytes, endian) => mem.read(offs, bytes).filter(_.length == bytes).map(a => {
                 self.withSpan(offs, offs + bytes).replace(StructVal.PrimInt(BigInt(1, endian.getOrElse(getDefaultEndian) match {
                     case Big => a
@@ -368,12 +379,15 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
                 })))
                 offs + bytes
             })
-            case Annotated(annot, ty) => parse(mem, offs, ty) // TODO: Make this functional
+            case Annotated(annot, ty) => annot match {
+                case Align(alignment) => parse(mem, offs, ty) // already handled by natural alignment
+                case Pack => { packed = true; parse(mem, offs, ty) }
+            }
             case Named(name) => {
                 isolated = true // can't resolve names outside lexical scope, still needs to be parent for attributes and such
                 resolveType(name).flatMap(parse(mem, offs, _))
             }
-            case Struct(body) => // TODO: Alignment
+            case Struct(body) =>
                 body.foldLeft(Option(offs)){ case (res, stmt) => res.flatMap { case offs =>
                         child(stmt.name.map(_.name), false).parse(mem, offs, stmt.ty)
                     }
@@ -425,8 +439,9 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
         import Expr._
         if (trace) println("Evaling " ++ e.toString())
         val ret = e match {
-            case ConstantNum(value) => Option(StructVal.PrimInt(value))
-            case ConstantBytes(value) => Option(StructVal.PrimBytes(value))
+            case ConstantNum(value) => Some(StructVal.PrimInt(value))
+            case ConstantBytes(value) => Some(StructVal.PrimBytes(value))
+            case Nil => Some(StructVal.Object())
             case Variable(name) => resolveName(name)
             case Ternary(cond, left, right) => eval(cond).flatMap(_.intValue).flatMap(c => if (c != 0) eval(left) else eval(right))
             case Binary(left, op, right) => eval(left).flatMap(l => eval(right).flatMap(op.apply(l, _)))
@@ -487,4 +502,8 @@ object Foo extends App {
     )
     println(ctx.self("value").flatMap(_.intValue))
 
+    val calcTy = parse("""@align(0x20) { calc("abcdef" == "abcdef"); }""", ty(_)).get.value
+    val calcCtx = StructCtx(Seq.empty).traced()
+    println(calcCtx.parse(Array.emptyByteArray, 3, calcTy))
+    println(calcCtx.self)
 }
