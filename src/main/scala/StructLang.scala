@@ -465,7 +465,7 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
                         case Some(value) => curoffs = value
                     }
                 } while ((cond match {
-                    case RepeatCond.Eof => Option(false)
+                    case RepeatCond.Eof => Option(mem.read(curoffs - 1, 2).map(_.length == 2) == Some(true))
                     case RepeatCond.Until(pred) => eval(pred).flatMap(_.intValue).map(_ == 0)
                     case RepeatCond.While(pred) => eval(pred).flatMap(_.intValue).map(_ != 0)
                 }) match {
