@@ -461,12 +461,16 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
     def eval(e: Expr): Option[StructVal] = {
         import Expr._
         if (trace) println("Evaling " ++ e.toString())
+        def truev = StructVal.PrimInt(1)
+        def falsev = StructVal.PrimInt(0)
         val ret = e match {
             case ConstantNum(value) => Some(StructVal.PrimInt(value))
             case ConstantBytes(value) => Some(StructVal.PrimBytes(value))
             case Nil => Some(StructVal.Object())
             case Variable(name) => resolveName(name)
             case Ternary(cond, left, right) => eval(cond).flatMap(_.intValue).flatMap(c => if (c != 0) eval(left) else eval(right))
+            case Binary(left, BinOp.LAnd, right) => eval(left).flatMap(_.intValue).flatMap(v => if (v != 0) eval(right).flatMap(_.intValue).map(r => if (r != 0) truev else falsev) else Some(falsev))
+            case Binary(left, BinOp.LOr, right) => eval(left).flatMap(_.intValue).flatMap(v => if (v == 0) eval(right).flatMap(_.intValue).map(r => if (r != 0) truev else falsev) else Some(truev))
             case Binary(left, op, right) => eval(left).flatMap(l => eval(right).flatMap(op.apply(l, _)))
             case Unary(op, of) => eval(of).flatMap(op.apply)
             case Prop(obj, name) => eval(obj).flatMap(_(name.name))
