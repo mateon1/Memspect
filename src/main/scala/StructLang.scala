@@ -159,6 +159,7 @@ object Parser {
         | ident.map(Type.Named)
         | (annotation ~ plaintype).map(Type.Annotated.tupled)
         | struct
+        | ("calc" ~ "(" ~/ expr ~ ")").map(Type.Calc)
         | ("repeat" ~ ty ~ repeatCond).map(Type.Repeated.tupled)
         | ("match" ~ "{" ~ matchArm.rep ~ "}").map(Type.Match)
         | ("assert" ~ "(" ~ expr ~ ")").map(Type.Assert))
@@ -169,9 +170,8 @@ object Parser {
         | ("[" ~ expr ~ "]").map(expr => ty => Type.Array(ty, expr)))
     )
     def ty[_: P]: P[Type] = P(
-        ("calc" ~/ "(" ~ expr ~ ")").map(Type.Calc) |
-        ("if" ~/ "(" ~ expr ~ ")" ~ ty).map(Type.Conditional.tupled) |
-        ("in" ~/ "(" ~ expr ~ ")" ~ ty).map(Type.Inside.tupled) |
+        ("if" ~ "(" ~/ expr ~ ")" ~ ty).map(Type.Conditional.tupled) |
+        ("in" ~ "(" ~/ expr ~ ")" ~ ty).map(Type.Inside.tupled) |
         (plaintype ~ tyTrail.rep).map {
             case (t, trails) =>
                 trails.foldLeft[Type](t)((acc, p) => p(acc))
@@ -244,7 +244,7 @@ object Parser {
     )
 
     def expr[_: P]: P[Expr] = P(
-        exprTernary
+        "" ~ exprTernary ~ ""
     )
 
     def stmt[_: P]: P[Stmt] = P(ty ~ ident.? ~/ ";").map(Stmt.tupled)
@@ -256,7 +256,7 @@ object Parser {
     def parseProgram(inp: fastparse.ParserInputSource): Parsed[Seq[Top.TypeDef]] = parse(inp, typedefs(_))
 }
 
-sealed trait StructVal {
+sealed trait StructVal extends RandomAccess {
     var replaced = Option.empty[StructVal]
     val vals = mutable.ArrayBuffer[StructVal]()
     val valNames = mutable.SeqMap[String, Int]()
@@ -291,6 +291,11 @@ sealed trait StructVal {
     }
     def replace(o: StructVal) = replaced = Option(o)
     def intValue: Option[BigInt] = replaced.flatMap(_.intValue)
+    def read(offs: Long, maxlen: Int): Option[Array[Byte]] = {
+        Option.when(offs <= valUnnamed.length)(valUnnamed.slice(offs.toInt, offs.toInt + maxlen).map(vals(_).intValue))
+            .filter(a => { a.map(v => v.isDefined && (v.get & ~0xff) == 0).minOption != Some(false) })
+            .map(a => a.map(_.get.toByte).toArray)
+    }
     override def toString(): String = {
         val names = valNames.map{case((a, b)) => (b, a)}
         val subs = vals.zipWithIndex.map{case (v, i) => (names.get(i) match { case Some(n) => n + ": "; case None => "" }) + v.toString() + "; "}
@@ -422,7 +427,7 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
                 Option(curoffs)
             }
             case Conditional(cond, ty) => eval(cond).flatMap(_.intValue).flatMap(c => if (c == 0) Option(offs) else parse(mem, offs, ty))
-            case Inside(buf, ty) => throw new NotImplementedError
+            case Inside(buf, ty) => eval(buf).map(parse(_, 0, ty)).map(_ => offs)
             case Match(arms) => {
                 for (a <- arms) {
                     eval(a.cond).flatMap(_.intValue.map(_ != 0)) match {
