@@ -1,6 +1,7 @@
 import scala.collection.mutable
 import scala.collection.immutable
 import RandomAccess._
+import java.io.FileNotFoundException
 
 object Ast {
     case class Ident(name: String)
@@ -44,6 +45,7 @@ object Ast {
         case class Repeated(what: Type, cond: RepeatCond) extends Type { override val naturalAlignment: Option[Int] = what.naturalAlignment }
         case class Conditional(cond: Expr, ty: Type) extends Type
         case class Inside(buf: Expr, ty: Type) extends Type
+        case class At(offs: Expr, ty: Type) extends Type
         case class Match(arms: Seq[MatchArm]) extends Type
         case class Assert(pred: Expr) extends Type
         case class Calc(expr: Expr) extends Type
@@ -172,6 +174,7 @@ object Parser {
     def ty[_: P]: P[Type] = P(
         ("if" ~ "(" ~/ expr ~ ")" ~ ty).map(Type.Conditional.tupled) |
         ("in" ~ "(" ~/ expr ~ ")" ~ ty).map(Type.Inside.tupled) |
+        ("at" ~ "(" ~/ expr ~ ")" ~ ty).map(Type.At.tupled) |
         (plaintype ~ tyTrail.rep).map {
             case (t, trails) =>
                 trails.foldLeft[Type](t)((acc, p) => p(acc))
@@ -449,6 +452,7 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
                 case Big => v
                 case Little => v.reverse
             }), to))).map(_ => offs + 8)
+            case At(off, ty) => eval(off).flatMap(_.intValue).map(v => self.replace(StructVal.LazyVal(this, mem, v, ty))).map(_ => offs)
             case Ast.Type.Array(of, len) => this.eval(len).flatMap(_.intValue).flatMap{
                 case reps =>
                     (1.to(reps.toInt)).foldLeft(Option(offs)){case (o, _) => o.flatMap(child().parse(mem, _, of))}.map(end => { if (offs < end) self.withSpan(offs, end); end })
@@ -578,4 +582,14 @@ object Foo extends App {
     val ctxDec = StructCtx(Seq.empty).traced()
     println(ctxDec.parse("-61234".map(_.toByte).toArray, 0, types("decimal")))
     println(ctxDec.self)
+
+    val quietCtx = StructCtx(Seq.empty)
+
+    try {
+        val ctxXcf = StructCtx(defs).traced()
+        println(ctxXcf.parse(new FileInputStream("/tmp/example.xcf").readAllBytes(), 0, types("gimpxcf")))
+        println(ctxXcf.self)
+    } catch {
+        case _: FileNotFoundException => println("Could not load /tmp/example.xcf")
+    }
 }

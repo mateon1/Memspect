@@ -50,3 +50,68 @@ decimal := {
     calc((helper.length > 1 ? helper[helper.length - 2] * 10 : 0) + digits[helper.length - 1].char - '0')[digits.length] helper;
     calc(sign.value * helper.last) value;
 };
+
+gimpxcf := @pack {
+    u1[9] magic1;
+    assert(magic1 == "gimp xcf ");
+    u1[4] versionRaw;
+    u1 magicNul;
+    assert(!magicNul);
+    match {
+        (versionRaw == "file"): { calc(0) num; };
+        (versionRaw[0] == 'v'): { in(versionRaw) { u1; decimal decval; } ver; calc(ver.decval.value) num; };
+    } version;
+    u4be canvasWidth;
+    u4be canvasHeight;
+    u4be baseTypeRaw;
+    match {
+        (baseTypeRaw == 0): calc("rgb");
+        (baseTypeRaw == 1): calc("gray");
+        (baseTypeRaw == 2): calc("indexed");
+    } baseTypeStr;
+    if (version.num >= 4) u4be precision;
+    // properties
+    xcfPropList properties;
+    // layer refs
+    repeat {
+        match {
+            (version.num <= 10): u4be;
+            (1): u8be;
+        } ptr;
+        if (ptr) at(ptr) xcfLayer val;
+        //assert(val.length >= 0);
+    } until(_.last.ptr == 0) layers;
+    // channel refs
+};
+
+xcfPropList := repeat {
+    u4be type;
+    u4be len;
+    u1[len] data;
+    @try match {
+        (type == 0): assert(len == 0);
+        (type == 21): in(data) xcfParasites;
+    } parsed;
+} until(_.last.type == 0);
+
+xcfString := @pack { u4be len; u1[len] data; if(len) assert(data.last == 0); };
+
+xcfParasites := @pack repeat {
+    xcfString name;
+    u4be flags;
+    u4be size;
+    u1[size] payload;
+} eof;
+
+/// Hmmmm, parametrizing by pointer type would be real useful here
+xcfLayer := @pack {
+    u4be width;
+    u4be height;
+    u4be type;
+    assert(type <= 5);
+    xcfString name;
+    xcfPropList properties;
+    {
+
+    } hierarchy;
+};
