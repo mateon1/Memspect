@@ -134,16 +134,17 @@ object Parser {
     )
 
     def bytestrchar[_: P]: P[Byte] = P(
-        ("\\x" ~~ CharIn("0-9a-fA-F").repX(exactly=2).!.map(lang.Byte.parseByte(_, 16))
+        ("\\x" ~~ CharIn("0-9a-fA-F").repX(exactly=2).!.map(lang.Integer.parseUnsignedInt(_, 16).toByte)
         | "\\n".!.map(_ => '\n'.toByte)
         | "\\t".!.map(_ => '\t'.toByte)
         | "\\r".!.map(_ => '\r'.toByte)
+        | "\\\"".!.map(_ => '"'.toByte)
         | CharIn(" !#-[]-~").!.map(_(0).toByte) // printable ascii except '"' and '\'
         )
     )
 
     def bytestr[_: P]: P[Expr.ConstantBytes] = P(
-        "b\"" ~~ bytestrchar.repX.map(bs => Expr.ConstantBytes(bs)) ~~ "\""
+        "\"" ~~ bytestrchar.repX.map(bs => Expr.ConstantBytes(bs)) ~~ "\""
     )
 
     def struct[_: P]: P[Type.Struct] = P(("{" ~ stmt.rep ~ "}").map(Type.Struct))
@@ -194,13 +195,7 @@ object Parser {
     def exprAtom[_: P]: P[Expr] = P(
         ( "nil".!.map(_ => Expr.Nil)
         | num.map(Expr.ConstantNum)
-        | ("\"" ~~
-            ( CharPred(!"\\\"".contains(_)).!.map(_(0).toByte)
-            | "\\" ~~ ( "x" ~~ CharIn("0-9a-fA-F").repX(exactly=2).!.map(lang.Byte.parseByte(_, 16))
-                      | "n".!.map(_ => '\n'.toByte)
-                      | "t".!.map(_ => '\t'.toByte)
-                      | "\"".!.map(_ => '"'.toByte))
-            ).rep ~~ "\"").map(s => Expr.ConstantBytes(s))
+        | bytestr
         | ident.map(Expr.Variable)
         | "(" ~ expr ~ ")"
         ) ~ trailAtom.repX
