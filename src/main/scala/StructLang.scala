@@ -33,6 +33,8 @@ object Ast {
             override val naturalAlignment: Option[Int] = annot match {
                 case Align(alignment) => Some(alignment)
                 case Pack => Some(1) // @pack needs to be handled separately anyway, as it overrides alignment for all children
+                case Lookahead => None
+                case Try => None
             }
         }
         case class Named(name: Ident) extends Type
@@ -50,6 +52,8 @@ object Ast {
     object Annotation {
         case class Align(alignment: Int) extends Annotation
         case object Pack extends Annotation
+        case object Lookahead extends Annotation
+        case object Try extends Annotation
     }
     sealed trait RepeatCond
     object RepeatCond {
@@ -175,6 +179,8 @@ object Parser {
     def annotation[_: P]: P[Annotation] = P(
         "@align" ~ "(" ~ num.map(_.toInt).filter(a => a != 0 && (a & (a-1)) == 0 ).map(Annotation.Align) ~ ")"
         | "@pack".!.map(_ => Annotation.Pack)
+        | "@lookahead".!.map(_ => Annotation.Lookahead)
+        | "@try".!.map(_ => Annotation.Try)
     )
     def repeatCond[_: P]: P[RepeatCond] = P(
         ( "eof".!.map(_ => RepeatCond.Eof)
@@ -351,7 +357,6 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
     def trace(): Boolean = tracing || parent.map(_.trace()).getOrElse(false)
     var defaultEndian = Option.empty[Endianness]
     def getDefaultEndian(): Endianness = defaultEndian.getOrElse(parent.map(_.getDefaultEndian).getOrElse(Endianness.Little))
-    // TODO: Alignment
 
     private def child(obj: StructVal, isolated: Boolean) = new StructCtx(defs, mutable.HashMap.empty, Option(this), obj, isolated)
     private def child(name: Option[String], isolated: Boolean): StructCtx = {
@@ -382,6 +387,8 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
             case Annotated(annot, ty) => annot match {
                 case Align(alignment) => parse(mem, offs, ty) // already handled by natural alignment
                 case Pack => { packed = true; parse(mem, offs, ty) }
+                case Lookahead => parse(mem, offs, ty).map(_ => offs)
+                case Try => parse(mem, offs, ty).orElse(Some(offs))
             }
             case Named(name) => {
                 isolated = true // can't resolve names outside lexical scope, still needs to be parent for attributes and such
