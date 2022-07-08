@@ -358,7 +358,36 @@ object StructVal {
             o
         }
     }
-    case class LazyVal(ctx: StructCtx, mem: RandomAccess, offs: Long, ty: Ast.Type) extends StructVal
+    case class LazyVal(ctx: StructCtx, mem: RandomAccess, offs: BigInt, ty: Ast.Type) extends StructVal {
+        private var isParsed = false
+        override def apply(prop: String): Option[StructVal] = {
+            for (r <- replaced) return r(prop)
+            prop match {
+                case "parsed" => return Some(StructVal.PrimInt(if (isParsed) 1 else 0))
+                case "offset" => return Some(StructVal.PrimInt(offs))
+                case _ => ()
+            }
+            if (!isParsed) doParse()
+            super.apply(prop)
+        }
+        override def apply(idx: Int): Option[StructVal] = {
+            for (r <- replaced) return r(idx)
+            if (!isParsed) doParse()
+            super.apply(idx)
+        }
+        override def toString(): String = {
+            for (r <- replaced) return r.toString()
+            if (isParsed)
+                super.toString()
+            else
+                f"<lazy @0x$offs%x>"
+        }
+        def doParse() {
+            assert(ctx.self == this)
+            isParsed = true
+            ctx.parse(mem, offs.toLong, ty)
+        }
+    }
 }
 class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, StructVal], val parent: Option[StructCtx], val self: StructVal, var isolated: Boolean = false) {
     import Ast._
@@ -416,10 +445,10 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
                     }
                 }.map(end => { if (offs < end) self.withSpan(offs, end); end })
             // TODO: Actual lazy pointer type, not just alias for an integer
-            case Pointer(to) => mem.read(offs, 8).filter(_.length == 8).map(v => self.withSpan(offs, offs + 8).replace(StructVal.PrimInt(BigInt(1, getDefaultEndian() match {
+            case Pointer(to) => mem.read(offs, 8).filter(_.length == 8).map(v => self.withSpan(offs, offs + 8).replace(StructVal.LazyVal(this, mem, BigInt(1, getDefaultEndian() match {
                 case Big => v
                 case Little => v.reverse
-            })))).map(_ => offs + 8)
+            }), to))).map(_ => offs + 8)
             case Ast.Type.Array(of, len) => this.eval(len).flatMap(_.intValue).flatMap{
                 case reps =>
                     (1.to(reps.toInt)).foldLeft(Option(offs)){case (o, _) => o.flatMap(child().parse(mem, _, of))}.map(end => { if (offs < end) self.withSpan(offs, end); end })
