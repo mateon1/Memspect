@@ -33,3 +33,20 @@ varint := @pack {
     } until (_.last.end) helper;
     calc (helper.last.value) value;
 };
+
+decimal := {
+    @try {
+        u1 char;
+        calc(char == '-' ? -1 : 1) value;
+        assert(char == '+' || char == '-'); // don't consume non-sign chars
+    } sign;
+    @lookahead u1 first;
+    assert(first >= '0' && first <= '9');
+    repeat {
+        u1 char;
+        @try @lookahead u1 next;
+        calc(next != nil && next >= '0' && next <= '9') continue;
+    } while(_.last.continue) digits;
+    calc((helper.length > 1 ? helper[helper.length - 2] * 10 : 0) + digits[helper.length - 1].char - '0')[digits.length] helper;
+    calc(sign.value * helper.last) value;
+};

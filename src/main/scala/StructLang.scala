@@ -269,8 +269,11 @@ sealed trait StructVal extends RandomAccess {
         spanEnd = Option(to)
         this
     }
-    def apply(idx: Int): Option[StructVal] = Option.when(idx < valUnnamed.length)(vals(valUnnamed(idx)))
-    def builtinProp(prop: String): Option[StructVal] = {
+    def apply(idx: Int): Option[StructVal] = {
+        for (r <- replaced) return r(idx)
+        Option.when(idx < valUnnamed.length)(vals(valUnnamed(idx)))
+    }
+    protected def builtinProp(prop: String): Option[StructVal] = {
         prop match {
             case "length" => Some(StructVal.PrimInt(BigInt(valUnnamed.length)))
             case "last" => last
@@ -278,9 +281,11 @@ sealed trait StructVal extends RandomAccess {
         }
     }
     def apply(prop: String): Option[StructVal] = {
+        for (r <- replaced) return r(prop)
         valNames.get(prop).map(vals(_)).orElse(builtinProp(prop))
     }
-    def push(o: StructVal, name: Option[String]) = {
+    def push(o: StructVal, name: Option[String]): Unit = {
+        for (r <- replaced) return r.push(o, name)
         val idx = vals.length
         vals.addOne(o)
         last = Some(o)
@@ -292,16 +297,26 @@ sealed trait StructVal extends RandomAccess {
     def replace(o: StructVal) = replaced = Option(o)
     def intValue: Option[BigInt] = replaced.flatMap(_.intValue)
     def read(offs: Long, maxlen: Int): Option[Array[Byte]] = {
+        for (r <- replaced) return r.read(offs, maxlen)
         Option.when(offs <= valUnnamed.length)(valUnnamed.slice(offs.toInt, offs.toInt + maxlen).map(vals(_).intValue))
             .filter(a => { a.map(v => v.isDefined && (v.get & ~0xff) == 0).minOption != Some(false) })
             .map(a => a.map(_.get.toByte).toArray)
     }
     override def toString(): String = {
+        for (r <- replaced) return r.toString()
         val names = valNames.map{case((a, b)) => (b, a)}
         val subs = vals.zipWithIndex.map{case (v, i) => (names.get(i) match { case Some(n) => n + ": "; case None => "" }) + v.toString() + "; "}
         val span = for (start <- spanStart; end <- spanEnd) yield f"<$start%d..$end%d>"
+        val printables = BigInt(32).to(126)
         () match {
             case () if intValue.isDefined && subs.isEmpty => intValue.get.toString()
+            case () if names.isEmpty && vals.zipWithIndex.map{case((v, i)) => v.intValue.isDefined && (i > 0 && i == vals.length - 1 && v.intValue.get == 0 || v.intValue.get == '\t' || v.intValue.get == '\n' || printables.contains(v.intValue.get))}.minOption == Some(true)
+                => span.map(_ + " ").getOrElse("") + "\"" + vals.map(_.intValue.get.toByte match {
+                    case '\n' => "\n"
+                    case '\t' => "\t"
+                    case 0 => "\\x00"
+                    case v => v.toChar.toString()
+                }).mkString + "\""
             case () =>
                 span.map(_ + " ").getOrElse("") +
                 Option.when(subs.nonEmpty)("{ " + subs.mkString + "}").getOrElse("nil") +
@@ -314,6 +329,7 @@ sealed trait StructVal extends RandomAccess {
         })*/
     }
     override def equals(obj: Any): Boolean = {
+        for (r <- replaced) return r.equals(obj)
         if (!obj.isInstanceOf[StructVal]) return false
         val rhs = obj.asInstanceOf[StructVal]
         // TODO: How to handle lazy values?
@@ -459,6 +475,9 @@ class StructCtx(val defs: Map[String, Ast.Type], val vals: mutable.Map[String, S
         if (trace) println("Evaled " ++ e.toString() ++ " = " ++ ret.toString())
         ret
     }
+    def evalExpr(e: String): Option[StructVal] = {
+        fastparse.parse(e, Parser.expr(_)).fold((_, _, _) => None, (expr, end) => Option.when(end == e.length)(expr).flatMap(eval))
+    }
     vals.addOne(("_", self))
 }
 object StructCtx {
@@ -482,9 +501,10 @@ object Foo extends App {
     //val res = parse("5 >> 2 != 0 ? x : y - y == 0 ? 1 : 0", expr(_), true)
     val res = parse(s, toplevel(_), true)
     //println(res)
-    res.fold({case (s, p, extra) =>
+    res.fold({case (ex, p, extra) =>
         println("Failed")
-        println(s, p, extra)
+        println(ex, p, extra)
+        println(s.slice(p, p+20).map(_.toChar).mkString)
         println(extra.trace(true))
     }, { case (e, p) =>
         println("Success")
@@ -509,8 +529,20 @@ object Foo extends App {
     )
     println(ctx.self("value").flatMap(_.intValue))
 
-    val calcTy = parse("""@align(0x20) { calc("abcdef" == "abcdef"); }""", ty(_)).get.value
+    val calcTy = parse("""@align(0x20) { calc("abcdef" == "abcdef"); @try u1 test; calc(test == nil); }""", ty(_)).get.value
     val calcCtx = StructCtx(Seq.empty).traced()
     println(calcCtx.parse(Array.emptyByteArray, 3, calcTy))
     println(calcCtx.self)
+
+    val inTy = parse("""in("\x15\x01\x00\x00") u4be""", ty(_)).get.value
+    val inCtx = StructCtx(Seq.empty).traced()
+    println(inCtx.parse(Array.emptyByteArray, 3, inTy))
+    println(inCtx.self)
+
+    println(ctx.evalExpr(""" "test string\x01\x00\nHello!" """))
+    println(ctx.evalExpr(""" "" == nil """))
+
+    val ctxDec = StructCtx(Seq.empty).traced()
+    println(ctxDec.parse("-61234".map(_.toByte).toArray, 0, types("decimal")))
+    println(ctxDec.self)
 }
